@@ -1,4 +1,4 @@
-from Estimator import Estimator
+from Estimator import Estimator, LinearEstimator
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,20 +14,28 @@ import datetime
 class Agent:
     """for optimization reduce number of passes throught estimator (will be done later) """
 
-    def __init__(self,  num_actions,estimator, target_estimator):
+    def __init__(self,  num_actions,cart_pole=False):
         self.num_actions = num_actions
-        #self.estimator = Estimator(num_actions)
-        self.estimator = estimator
-        self.target_estimator = target_estimator
-        #self.target_estimator = Estimator(num_actions)
-        #self.estimator.cuda()
-        #self.target_estimator.cuda()
+
+        if cart_pole:
+            self.estimator =  LinearEstimator(num_actions)
+            self.target_estimator =  LinearEstimator(num_actions)
+            self.buffer = ReplayBuffer(10000)
+
+        else:
+            self.estimator = Estimator(num_actions)
+            self.target_estimator = Estimator(num_actions)
+            self.buffer = ReplayBuffer(1000000)
+
+        self.estimator.cuda()
+        self.target_estimator.cuda()
+
 
         self.optimizer = optim.RMSprop(self.estimator.parameters(), lr=0.0001)
         self.optimizer.zero_grad()
 
         self.mse = nn.MSELoss()
-        self.buffer = ReplayBuffer(1000000)
+
         self.synchronize_target_estimator()
 
     def load_weights(self, weights_file):
@@ -109,7 +117,8 @@ class Agent:
 
 
 
-    def train(self, start_training, batch_size, env, nr_episodes,  decay_until_step, decay_until_value):
+    def train(self, start_training, batch_size, env, nr_episodes,  decay_until_step, decay_until_value, update_targ_freq):
+        self.update_targ_freq = update_targ_freq
         self.start_time = time.time()
         print("Starting training loop at: "+ time.asctime(time.localtime(self.start_time)))
         total_steps = 0
@@ -144,6 +153,11 @@ class Agent:
 
 
             while not done:
+                if (total_steps % self.update_targ_freq) == 0:
+                    print("synchronizing target estimator !")
+                    self.synchronize_target_estimator()
+                    self.save_model_during_training()
+
                 eps = self.get_epsilon(total_steps, decay_until_step, decay_until_value)
                 action = self.choose_e_greedy_action(state, eps)
                 next_state, reward, done = env.step(action)
@@ -159,16 +173,15 @@ class Agent:
                     running_episode_reward = running_episode_reward * 0.9 + 0.1 * episode_reward
 
                     if (i % 10) == 0:
+                        print("\n")
+
                         print("global step: {}".format(total_steps))
                         print("episode: {}".format(i))
                         print("running reward: {}".format(running_episode_reward))
                         print("current epsilon: {}".format(eps))
                         print("episode_length: {}".format(episode_counter))
                         print("episode reward: {}".format(episode_reward))
-                        if (i % 100) ==  0:
-                            print("synchronizing target estimator !")
-                            self.synchronize_target_estimator()
-                            self.save_model_during_training()
+
 
                         print("\n")
 
