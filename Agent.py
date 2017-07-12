@@ -14,8 +14,9 @@ import datetime
 class Agent:
     """for optimization reduce number of passes throught estimator (will be done later) """
 
-    def __init__(self,  num_actions,cart_pole=False):
+    def __init__(self,  num_actions,cart_pole=False, double_q=True):
         self.num_actions = num_actions
+        self.double_q = double_q
 
         if cart_pole:
             self.estimator =  LinearEstimator(num_actions)
@@ -112,7 +113,10 @@ class Agent:
     def save_model_during_training(self):
         with open("./current_model.torch", "wb") as f:
             print("saving current_model")
+            print("\n")
             torch.save(self.estimator.state_dict(), f)
+
+
 
 
 
@@ -156,6 +160,9 @@ class Agent:
                 if (total_steps % self.update_targ_freq) == 0:
                     print("synchronizing target estimator !")
                     self.synchronize_target_estimator()
+
+
+                if (i % 100) == 0:
                     self.save_model_during_training()
 
                 eps = self.get_epsilon(total_steps, decay_until_step, decay_until_value)
@@ -164,7 +171,12 @@ class Agent:
                 total_steps += 1
                 self.buffer.add(state, action, reward, done, next_state)
                 s_batch, a_batch, r_batch, d_batch, s2_batch = self.buffer.sample_batch(batch_size)
-                q_targets = self.calculate_q_targets(s2_batch,r_batch,d_batch)
+
+                if(self.double_q == True):
+                    q_targets = self.calculate_double_q_targets(s2_batch,r_batch,d_batch)
+                else:
+                    q_targets = self.calculate_q_targets(s2_batch,r_batch,d_batch)
+
                 self.update(s_batch,q_targets,a_batch)
                 state = next_state
                 episode_counter += 1
@@ -177,8 +189,8 @@ class Agent:
 
                         print("global step: {}".format(total_steps))
                         print("episode: {}".format(i))
-                        print("running reward: {}".format(running_episode_reward))
-                        print("current epsilon: {}".format(eps))
+                        print("running reward: {}".format(round(running_episode_reward,2)))
+                        print("current epsilon: {}".format(round(eps,2)))
                         print("episode_length: {}".format(episode_counter))
                         print("episode reward: {}".format(episode_reward))
 
@@ -204,6 +216,16 @@ class Agent:
         next_max_q_values = np.max(self.predict_q_targets_values(next_states).data.cpu().numpy(), axis=1)
         next_max_q_values[done_mask] = 0
         q_targets = rewards + next_max_q_values
+        return q_targets
+
+    def calculate_double_q_targets(self, next_states, rewards, done):
+        done_mask = done == 1
+        next_q_values_target = self.predict_q_targets_values(next_states).data.cpu().numpy()
+        next_q_values_online = self.predict_q_values(next_states).data.cpu().numpy()
+        next_q_values_online_argmax = np.argmax(next_q_values_online, axis=1)
+        q_term = next_q_values_target[list(range(len(next_q_values_online_argmax))), next_q_values_online_argmax]
+        q_term[done_mask] = 0
+        q_targets = rewards + q_term
         return q_targets
 
     def synchronize_target_estimator(self):
